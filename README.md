@@ -24,8 +24,7 @@ In the following, I will explain how to self-host this webapp on Vercel so that 
     - In the "Deployment Protection" Tab, disable "Vercel Authentication" at the very top.
 7. Add database to project
     - In the project, click the "Storage" Tab
-    - Click "Create Database"
-    - Select "Postgres", then "accept", then "create", then "connect" (all defaults are fine in between)
+    - Click "Neon (serverless postgres)" and accept all (all defaults are fine)
 8. Rebuild project
     - In the project, click the "Deployments" Tab.
     - Select the 3 dots next to the previously failed build and click "Redeploy"
