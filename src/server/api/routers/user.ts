@@ -273,6 +273,30 @@ export const userRouter = createTRPCRouter({
       }
     }),
 
+  setVacationMode: publicProcedure
+    .input(
+      z.object({
+        until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), // YYYY-MM-DD or null to clear
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const decoded = await checkAuthCookie(ctx.headers);
+        await db
+          .update(userTemperatureProfile)
+          .set({ vacationModeUntil: input.until, updatedAt: new Date() })
+          .where(eq(userTemperatureProfile.email, decoded.email))
+          .execute();
+        return { success: true };
+      } catch (error) {
+        console.error("Error setting vacation mode:", error);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "An unexpected error occurred while setting vacation mode.",
+        });
+      }
+    }),
+
   deleteUserTemperatureProfile: publicProcedure.mutation(async ({ ctx }) => {
     try {
       const decoded = await checkAuthCookie(ctx.headers);

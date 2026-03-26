@@ -25,6 +25,22 @@ function addDays(date: Date, days: number): Date {
   return result;
 }
 
+const SCHEDULE_WINDOW_MINUTES = 15;
+
+// Returns true if vacation mode should suppress the schedule.
+// Vacation ends once we are within SCHEDULE_WINDOW_MINUTES of pre-heating on the resume date,
+// so the first cron run that would trigger pre-heating is also the first run where vacation is off.
+function isVacationModeOn(vacationDate: string, userNow: Date, preHeatingTime: Date): boolean {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const todayStr = `${userNow.getFullYear()}-${pad(userNow.getMonth() + 1)}-${pad(userNow.getDate())}`;
+
+  if (todayStr < vacationDate) return true;   // before resume date
+  if (todayStr > vacationDate) return false;  // after resume date
+
+  // On the resume date: stay off until within SCHEDULE_WINDOW_MINUTES of pre-heating
+  return userNow.getTime() < preHeatingTime.getTime() - SCHEDULE_WINDOW_MINUTES * 60 * 1000;
+}
+
 function isWithinTimeRange(current: Date, target: Date, rangeMinutes: number): boolean {
   const diffMs = Math.abs(current.getTime() - target.getTime());
   return diffMs <= rangeMinutes * 60 * 1000;
@@ -125,6 +141,21 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
         const userTemperatureProfile = profile.userTemperatureProfiles;
         const userNow = new Date(now.toLocaleString("en-US", { timeZone: userTemperatureProfile.timezoneTZ }));
 
+        if (userTemperatureProfile.vacationModeUntil) {
+          const todaySleepCycle = createSleepCycle(userNow, userTemperatureProfile.bedTime, userTemperatureProfile.wakeupTime);
+          if (isVacationModeOn(userTemperatureProfile.vacationModeUntil, userNow, todaySleepCycle.preHeatingTime)) {
+            console.log(`Vacation mode active for user ${profile.users.email}. Resumes on ${userTemperatureProfile.vacationModeUntil}. Skipping.`);
+            if (!testMode?.enabled) {
+              const heatingStatus = await retryApiCall(() => getCurrentHeatingStatus(token));
+              if (heatingStatus.isHeating) {
+                await retryApiCall(() => turnOffSide(token, profile.users.eightUserId));
+                console.log(`Heating turned off for vacation mode for user ${profile.users.email}`);
+              }
+            }
+            continue;
+          }
+        }
+
         // Create the sleep cycle based on the user's bed time and wake-up time
         const sleepCycle = createSleepCycle(userNow, userTemperatureProfile.bedTime, userTemperatureProfile.wakeupTime);
 
@@ -155,11 +186,11 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
         console.log(`Final stage: ${adjustedCycle.finalStageTime.toISOString()}`);
         console.log(`Wake-up: ${adjustedCycle.wakeupTime.toISOString()}`);
 
-        const isNearPreHeating = isWithinTimeRange(userNow, adjustedCycle.preHeatingTime, 15);
-        const isNearBedTime = isWithinTimeRange(userNow, adjustedCycle.bedTime, 15);
-        const isNearMidStage = isWithinTimeRange(userNow, adjustedCycle.midStageTime, 15);
-        const isNearFinalStage = isWithinTimeRange(userNow, adjustedCycle.finalStageTime, 15);
-        const isNearWakeup = isWithinTimeRange(userNow, adjustedCycle.wakeupTime, 15);
+        const isNearPreHeating = isWithinTimeRange(userNow, adjustedCycle.preHeatingTime, SCHEDULE_WINDOW_MINUTES);
+        const isNearBedTime = isWithinTimeRange(userNow, adjustedCycle.bedTime, SCHEDULE_WINDOW_MINUTES);
+        const isNearMidStage = isWithinTimeRange(userNow, adjustedCycle.midStageTime, SCHEDULE_WINDOW_MINUTES);
+        const isNearFinalStage = isWithinTimeRange(userNow, adjustedCycle.finalStageTime, SCHEDULE_WINDOW_MINUTES);
+        const isNearWakeup = isWithinTimeRange(userNow, adjustedCycle.wakeupTime, SCHEDULE_WINDOW_MINUTES);
 
         // Determine current sleep stage
         let currentSleepStage = "outside sleep cycle";
@@ -211,7 +242,7 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
               console.log(`Heating level set to ${targetLevel} for user ${profile.users.email}`);
             }
           }
-        } else if (heatingStatus.isHeating && userNow > adjustedCycle.wakeupTime && !isWithinTimeRange(userNow, adjustedCycle.wakeupTime, 15)) {
+        } else if (heatingStatus.isHeating && userNow > adjustedCycle.wakeupTime && !isWithinTimeRange(userNow, adjustedCycle.wakeupTime, SCHEDULE_WINDOW_MINUTES)) {
           // Only turn off heating if it's more than 15 minutes past wake-up time
           if (testMode?.enabled) {
             console.log(`[TEST MODE] Would turn off heating for user ${profile.users.email}`);

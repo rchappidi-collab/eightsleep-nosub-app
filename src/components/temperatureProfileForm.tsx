@@ -26,6 +26,8 @@ export const TemperatureProfileForm: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isExistingProfile, setIsExistingProfile] = useState(false);
   const [sleepDurationError, setSleepDurationError] = useState<string | null>(null);
+  const [vacationModeUntil, setVacationModeUntil] = useState<string | null>(null);
+  const [vacationDateInput, setVacationDateInput] = useState<string>("");
 
   const {
     register,
@@ -70,6 +72,14 @@ export const TemperatureProfileForm: React.FC = () => {
       setValue("timezone", { value: profile.timezoneTZ });
       setIsExistingProfile(true);
       setIsLoading(false);
+      if (profile.vacationModeUntil) {
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+        setVacationModeUntil(profile.vacationModeUntil >= todayStr ? profile.vacationModeUntil : null);
+      } else {
+        setVacationModeUntil(null);
+      }
     } else if (getUserTemperatureProfileQuery.isError) {
       console.error("Failed to fetch temperature profile. Using default values.", getUserTemperatureProfileQuery.error);
       setIsExistingProfile(false);
@@ -118,6 +128,28 @@ export const TemperatureProfileForm: React.FC = () => {
         console.error("Failed to update temperature profile:", error.message);
       },
     });
+
+  const setVacationModeMutation = apiR.user.setVacationMode.useMutation({
+    onSuccess: (_, variables) => {
+      setVacationModeUntil(variables.until);
+      setVacationDateInput("");
+      void getUserTemperatureProfileQuery.refetch();
+    },
+    onError: (error) => {
+      console.error("Failed to set vacation mode:", error.message);
+    },
+  });
+
+  const isVacationActive = !!vacationModeUntil;
+
+  const onEnableVacation = () => {
+    if (!vacationDateInput) return;
+    setVacationModeMutation.mutate({ until: vacationDateInput });
+  };
+
+  const onDisableVacation = () => {
+    setVacationModeMutation.mutate({ until: null });
+  };
 
   const deleteProfileMutation =
     apiR.user.deleteUserTemperatureProfile.useMutation({
@@ -304,6 +336,59 @@ export const TemperatureProfileForm: React.FC = () => {
           control={control}
           info={`Starts at ${sleepInfo.finalStageTime}`}
         />
+
+        {isExistingProfile && (
+          <div className={`rounded-md p-4 ${isVacationActive ? "bg-amber-50 border border-amber-300" : "bg-gray-50 border border-gray-200"}`}>
+            <h3 className="mb-2 text-sm font-semibold text-gray-800">Vacation Mode</h3>
+            {isVacationActive ? (
+              <div>
+                <p className="mb-3 text-sm text-amber-800">
+                  Active — schedule resumes on{" "}
+                  <strong>
+                    {new Date(vacationModeUntil! + "T00:00:00").toLocaleDateString(undefined, {
+                      weekday: "short", year: "numeric", month: "short", day: "numeric",
+                    })}
+                  </strong>
+                  . The bed will not turn on before then.
+                </p>
+                <Button
+                  type="button"
+                  onClick={onDisableVacation}
+                  disabled={setVacationModeMutation.isPending}
+                  className="rounded-md border border-transparent bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+                >
+                  {setVacationModeMutation.isPending ? "Saving..." : "Resume Schedule Now"}
+                </Button>
+              </div>
+            ) : (
+              <div>
+                <p className="mb-2 text-sm text-gray-600">
+                  Pause the schedule until a future date. The bed won&apos;t turn on until then.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={vacationDateInput}
+                    min={new Date().toISOString().split("T")[0]}
+                    onChange={(e) => setVacationDateInput(e.target.value)}
+                    className="block rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-800 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                  />
+                  <Button
+                    type="button"
+                    onClick={onEnableVacation}
+                    disabled={!vacationDateInput || setVacationModeMutation.isPending}
+                    className="rounded-md border border-transparent bg-gray-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50"
+                  >
+                    {setVacationModeMutation.isPending ? "Saving..." : "Enable Vacation Mode"}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {setVacationModeMutation.isError && (
+              <p className="mt-2 text-sm text-red-600">Error updating vacation mode. Please try again.</p>
+            )}
+          </div>
+        )}
 
         <div className="flex justify-between">
           <Button
