@@ -32,16 +32,33 @@ export const userTemperatureProfile = createTable("userTemperatureProfiles", {
   timezoneTZ: varchar("timezone", { length: 50 }).notNull(),
 });
 
-export const usersRelations = relations(users, ({ one }) => ({
+export const usersRelations = relations(users, ({ one, many }) => ({
   temperatureProfile: one(userTemperatureProfile, {
     fields: [users.email],
     references: [userTemperatureProfile.email],
   }),
+  temperatureSchedules: many(temperatureSchedule),
 }));
 
 export const userTemperatureProfileRelations = relations(userTemperatureProfile, ({ one }) => ({
   user: one(users, {
     fields: [userTemperatureProfile.email],
+    references: [users.email],
+  }),
+}));
+
+export const temperatureSchedule = createTable("temperatureSchedules", {
+  id: integer("id").generatedAlwaysAsIdentity().primaryKey(),
+  email: varchar("email", { length: 255 }).references(() => users.email).notNull(),
+  time: time("time").notNull(),
+  temperature: integer("temperature").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const temperatureScheduleRelations = relations(temperatureSchedule, ({ one }) => ({
+  user: one(users, {
+    fields: [temperatureSchedule.email],
     references: [users.email],
   }),
 }));

@@ -1,11 +1,13 @@
 import type { NextRequest } from "next/server";
 import { db } from "~/server/db";
-import { userTemperatureProfile, users } from "~/server/db/schema";
-import { eq } from "drizzle-orm";
+import { userTemperatureProfile, users, temperatureSchedule } from "~/server/db/schema";
+import { eq, asc } from "drizzle-orm";
 import { obtainFreshAccessToken } from "~/server/eight/auth";
 import { type Token } from "~/server/eight/types";
 import { setHeatingLevel, turnOnSide, turnOffSide } from "~/server/eight/eight";
 import { getCurrentHeatingStatus } from "~/server/eight/user";
+
+import { getTargetTemperatureFromSchedules } from "./scheduleLogic";
 
 export const runtime = "nodejs";
 
@@ -173,12 +175,28 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
           currentSleepStage = "final";
         }
 
-        console.log(`Current sleep stage for user ${profile.users.email}: ${currentSleepStage}`);
+        const userSchedules = await db
+          .select()
+          .from(temperatureSchedule)
+          .where(eq(temperatureSchedule.email, profile.users.email))
+          .orderBy(asc(temperatureSchedule.time));
 
-        if (isNearPreHeating || isNearBedTime || isNearMidStage || isNearFinalStage || isNearWakeup) {
-          let targetLevel: number;
-          let sleepStage: string;
+        let targetLevel: number | null = null;
+        let sleepStage = "outside sleep cycle";
 
+        if (userSchedules.length > 0) {
+          // Use custom schedule entries
+          const result = getTargetTemperatureFromSchedules(
+            userSchedules.map((s) => ({
+              time: s.time.slice(0, 5),
+              temperature: s.temperature,
+            })),
+            userNow,
+          );
+          targetLevel = result.targetLevel;
+          sleepStage = result.stage;
+        } else {
+          // Fallback to 4-stage logic
           if (isNearPreHeating || (isNearBedTime && userNow < adjustedCycle.bedTime)) {
             targetLevel = userTemperatureProfile.initialSleepLevel;
             sleepStage = "pre-heating";
@@ -188,12 +206,15 @@ export async function adjustTemperature(testMode?: TestMode): Promise<void> {
           } else if (isNearMidStage || (isNearFinalStage && userNow < adjustedCycle.finalStageTime)) {
             targetLevel = userTemperatureProfile.midStageSleepLevel;
             sleepStage = "mid";
-          } else {
+          } else if (isNearFinalStage || (isNearWakeup && userNow < adjustedCycle.wakeupTime)) {
             targetLevel = userTemperatureProfile.finalSleepLevel;
             sleepStage = "final";
           }
+        }
 
-          console.log(`Adjusting temperature for ${sleepStage} stage for user ${profile.users.email}`);
+        console.log(`Current sleep stage for user ${profile.users.email}: ${sleepStage}`);
+
+        if (targetLevel !== null && (isNearPreHeating || isNearBedTime || isNearMidStage || isNearFinalStage || isNearWakeup)) {
 
           if (!heatingStatus.isHeating) {
             if (testMode?.enabled) {

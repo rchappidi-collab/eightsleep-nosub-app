@@ -1,14 +1,14 @@
 import { z } from "zod";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
-import { users, userTemperatureProfile } from "~/server/db/schema";
+import { users, userTemperatureProfile, temperatureSchedule } from "~/server/db/schema";
 import { cookies } from "next/headers";
 import {
   authenticate,
   obtainFreshAccessToken,
   AuthError,
 } from "~/server/eight/auth";
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { type Token } from "~/server/eight/types";
 import { TRPCError } from "@trpc/server";
 import { adjustTemperature } from "~/app/api/temperatureCron/route";
@@ -307,6 +307,119 @@ export const userRouter = createTRPCRouter({
       });
     }
   }),
+
+  // Temperature schedule endpoints
+  getTemperatureSchedule: publicProcedure.query(async ({ ctx }) => {
+    try {
+      const decoded = await checkAuthCookie(ctx.headers);
+      const email = decoded.email;
+
+      const schedules = await db
+        .select()
+        .from(temperatureSchedule)
+        .where(eq(temperatureSchedule.email, email))
+        .orderBy(asc(temperatureSchedule.time));
+
+      return schedules.map((s) => ({
+        id: s.id,
+        time: s.time.slice(0, 5),
+        temperature: Math.round(s.temperature / 10),
+      }));
+    } catch (error) {
+      console.error("Error fetching temperature schedule:", error);
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Failed to fetch temperature schedule.",
+      });
+    }
+  }),
+
+  addTemperatureSchedule: publicProcedure
+    .input(
+      z.object({
+        time: z.string().regex(/^\d{2}:\d{2}$/, "Must be in HH:MM format"),
+        temperature: z.number().int().min(-10).max(10),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const decoded = await checkAuthCookie(ctx.headers);
+        const email = decoded.email;
+
+        const result = await db
+          .insert(temperatureSchedule)
+          .values({
+            email,
+            time: `${input.time}:00.000000`,
+            temperature: Math.round(input.temperature * 10),
+          })
+          .returning()
+          .execute();
+
+        return result[0]!;
+      } catch (error) {
+        console.error("Error adding temperature schedule:", error);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to add temperature schedule.",
+        });
+      }
+    }),
+
+  updateTemperatureSchedule: publicProcedure
+    .input(
+      z.object({
+        id: z.number().int(),
+        time: z.string().regex(/^\d{2}:\d{2}$/, "Must be in HH:MM format"),
+        temperature: z.number().int().min(-10).max(10),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const decoded = await checkAuthCookie(ctx.headers);
+        const email = decoded.email;
+
+        await db
+          .update(temperatureSchedule)
+          .set({
+            time: `${input.time}:00.000000`,
+            temperature: Math.round(input.temperature * 10),
+            updatedAt: new Date(),
+          })
+          .where(eq(temperatureSchedule.id, input.id))
+          .execute();
+
+        return { success: true };
+      } catch (error) {
+        console.error("Error updating temperature schedule:", error);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to update temperature schedule.",
+        });
+      }
+    }),
+
+  deleteTemperatureSchedule: publicProcedure
+    .input(z.object({ id: z.number().int() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const decoded = await checkAuthCookie(ctx.headers);
+        const email = decoded.email;
+
+        await db
+          .delete(temperatureSchedule)
+          .where(eq(temperatureSchedule.id, input.id))
+          .execute();
+
+        return { success: true };
+      } catch (error) {
+        console.error("Error deleting temperature schedule:", error);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to delete temperature schedule.",
+        });
+      }
+    }),
 });
 
 async function authenticateUser(email: string, password: string) {
